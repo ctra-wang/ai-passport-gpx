@@ -111,6 +111,8 @@ int main(void)
     assert(cue.route_m == 120U);
     assert(cue.audio_length == 6U);
     assert(route_view_slice(&view, cue.audio_offset, cue.audio_length) != NULL);
+    int32_t dm;
+    assert(!route_view_get_elevation(&view, 0, &dm));
 
     buf[size - 1U] ^= 0xFFU;
     assert(!route_view_init(&view, buf, size, true));
@@ -121,6 +123,33 @@ int main(void)
     put32(buf + 12, route_crc32(buf + ROUTE_FILE_HEADER_SIZE,
                                 size - ROUTE_FILE_HEADER_SIZE));
     assert(!route_view_init(&view, buf, size, true));
+
+    (void)build_route(buf, sizeof(buf));
+    const uint32_t extension = ROUTE_FILE_HEADER_SIZE + 3U * ROUTE_POINT_SIZE;
+    memmove(buf + extension + 20, buf + extension, size - extension);
+    memcpy(buf + extension, "ELEV", 4);
+    put32(buf + extension + 4, 3);
+    put32(buf + extension + 8, (uint32_t)-250);
+    put32(buf + extension + 12, (uint32_t)ROUTE_ELEVATION_UNKNOWN);
+    put32(buf + extension + 16, 1250);
+    put32(buf + 8, (uint32_t)size + 20);
+    put32(buf + 36, extension + 20);
+    put32(buf + 40, extension + 20 + ROUTE_MARKER_SIZE);
+    const uint32_t new_data = extension + 20 + ROUTE_MARKER_SIZE + ROUTE_CUE_SIZE;
+    put32(buf + 44, new_data);
+    put32(buf + extension + 20 + ROUTE_MARKER_SIZE + 16, new_data);
+    put32(buf + 12, route_crc32(buf + ROUTE_FILE_HEADER_SIZE, size + 20 - ROUTE_FILE_HEADER_SIZE));
+    assert(route_view_init(&view, buf, size + 20, true));
+    assert(route_view_get_elevation(&view, 0, &dm) && dm == -250);
+    assert(!route_view_get_elevation(&view, 1, &dm));
+    assert(route_view_get_elevation(&view, 2, &dm) && dm == 1250);
+    assert(!route_view_get_elevation(&view, 3, &dm));
+    assert(route_view_get_cue(&view, 0, &cue) && cue.audio_offset == new_data);
+    put32(buf + extension + 4, 4);
+    assert(!route_view_init(&view, buf, size + 20, false));
+    put32(buf + extension + 4, 3);
+    put32(buf + extension + 8, 100001);
+    assert(!route_view_init(&view, buf, size + 20, false));
 
     puts("route_format: PASS");
     return 0;

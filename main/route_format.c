@@ -118,6 +118,19 @@ bool route_view_init(route_view_t *view, const void *data_ptr, size_t size, bool
         return false;
     }
 
+    const uint32_t extension_offset = header.points_offset + point_bytes;
+    const uint32_t extension_size = header.markers_offset - extension_offset;
+    uint32_t elevation_offset = 0;
+    if (extension_size >= 4U && memcmp(data + extension_offset, "ELEV", 4) == 0) {
+        if (extension_size != 8U + header.point_count * 4U ||
+            read_le32(data + extension_offset + 4) != header.point_count) return false;
+        elevation_offset = extension_offset + 8U;
+        for (uint32_t i = 0; i < header.point_count; ++i) {
+            const int32_t dm = read_le_i32(data + elevation_offset + i * 4U);
+            if (dm != ROUTE_ELEVATION_UNKNOWN && (dm < -120000 || dm > 100000)) return false;
+        }
+    }
+
     if (verify_crc) {
         const uint8_t *payload = data + header.header_size;
         const size_t payload_size = header.total_size - header.header_size;
@@ -191,7 +204,15 @@ bool route_view_init(route_view_t *view, const void *data_ptr, size_t size, bool
     view->data = data;
     view->data_size = header.total_size;
     view->header = header;
+    view->elevation_offset = elevation_offset;
     return true;
+}
+
+bool route_view_get_elevation(const route_view_t *view, uint32_t index, int32_t *decimeters)
+{
+    if (!view || !decimeters || !view->elevation_offset || index >= view->header.point_count) return false;
+    *decimeters = read_le_i32(view->data + view->elevation_offset + index * 4U);
+    return *decimeters != ROUTE_ELEVATION_UNKNOWN;
 }
 
 bool route_view_get_point(const route_view_t *view, uint32_t index, route_point_t *out)

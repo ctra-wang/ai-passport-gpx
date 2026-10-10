@@ -10,6 +10,7 @@
 #define ROUTE_POINT_SIZE 12U
 #define ROUTE_MARKER_SIZE 16U
 #define ROUTE_CUE_SIZE 28U
+#define ROUTE_ELEVATION_UNKNOWN INT32_MIN
 
 #define ROUTE_MAX_POINTS 20000U
 #define ROUTE_MAX_MARKERS 1024U
@@ -95,6 +96,7 @@ typedef struct {
     const uint8_t *data;
     size_t data_size;
     route_header_t header;
+    uint32_t elevation_offset;
 } route_view_t;
 
 uint32_t route_crc32_update(uint32_t crc, const void *data, size_t size);
@@ -102,6 +104,7 @@ uint32_t route_crc32(const void *data, size_t size);
 
 bool route_view_init(route_view_t *view, const void *data, size_t size, bool verify_crc);
 bool route_view_get_point(const route_view_t *view, uint32_t index, route_point_t *out);
+bool route_view_get_elevation(const route_view_t *view, uint32_t index, int32_t *decimeters);
 bool route_view_get_marker(const route_view_t *view, uint32_t index, route_marker_t *out);
 bool route_view_get_cue(const route_view_t *view, uint32_t index, route_cue_t *out);
 const uint8_t *route_view_slice(const route_view_t *view, uint32_t offset, uint32_t length);

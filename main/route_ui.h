@@ -30,3 +30,4 @@ void route_ui_pan(int direction);
 void route_ui_zoom(int direction);
 void route_ui_recenter(uint32_t route_m);
 bool route_ui_following(void);
+void route_ui_toggle_panel(void);

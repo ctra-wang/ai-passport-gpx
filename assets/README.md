@@ -12,6 +12,14 @@ Keep each asset in the matching subdirectory and document its destination, namin
 
 Store reusable font files and generated font sources in `fonts/`.
 
+`fonts/NotoSansCJKsc-Regular.otf` is from [Noto CJK](https://github.com/notofonts/noto-cjk/tree/main/Sans/OTF/SimplifiedChinese), under the SIL Open Font License in `fonts/OFL-NotoSansSC.txt`. `fonts/noto_sans_sc_14.c` is its 14 px, 1 bpp, uncompressed title font, compiled by `main/CMakeLists.txt`. It covers printable ASCII, common CJK unified ideographs, CJK punctuation and fullwidth characters, rather than all Unicode.
+
+Reproduce with the pinned converter:
+
+```bash
+npx --yes --package lv_font_conv@1.5.3 lv_font_conv --font assets/fonts/NotoSansCJKsc-Regular.otf --range 0x20-0x7E,0x2018-0x201F,0x3000-0x303F,0x4E00-0x9FFF,0xFF00-0xFFEF --size 14 --bpp 1 --format lvgl --no-compress --no-kerning --lv-font-name noto_sans_sc_14 --lv-include lvgl.h --output assets/fonts/noto_sans_sc_14.c
+```
+
 - Use descriptive names that include the family, weight, size, and format when relevant.
 - Document the source, license, character range, conversion command, and expected destination.
 - Check Flash and internal-RAM impact before adding a font; the ESP32-C3 has no PSRAM.

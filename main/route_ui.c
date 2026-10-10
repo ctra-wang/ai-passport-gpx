@@ -1,4 +1,5 @@
 #include "route_ui.h"
+#include "route_ui_geometry.h"
 
 #include "lvgl.h"
 
@@ -10,10 +11,12 @@
 #define MAP_Y 38
 #define MAP_W 224
 #define MAP_H 190
-#define MAX_LINE_POINTS 128
 #define MAX_VISIBLE_MARKERS 12
+#define PROFILE_W 200
+#define PROFILE_H 40
 
 LV_FONT_DECLARE(lv_font_source_han_sans_sc_16_cjk);
+LV_FONT_DECLARE(noto_sans_sc_14);
 
 static lv_obj_t *s_screen;
 static lv_obj_t *s_title;
@@ -22,17 +25,21 @@ static lv_obj_t *s_battery;
 static lv_obj_t *s_map;
 static lv_obj_t *s_route_line;
 static lv_obj_t *s_position;
-static lv_obj_t *s_marker_objs[MAX_VISIBLE_MARKERS];
 static lv_obj_t *s_marker_labels[MAX_VISIBLE_MARKERS];
 static lv_obj_t *s_cue_card;
 static lv_obj_t *s_cue_primary;
 static lv_obj_t *s_cue_secondary;
-static lv_point_precise_t s_line_points[MAX_LINE_POINTS];
+static lv_obj_t *s_profile;
+static lv_obj_t *s_profile_position;
+LV_DRAW_BUF_DEFINE_STATIC(s_map_buffer, MAP_W, MAP_H, LV_COLOR_FORMAT_I2);
+LV_DRAW_BUF_DEFINE_STATIC(s_profile_buffer, PROFILE_W, PROFILE_H, LV_COLOR_FORMAT_I2);
+static bool s_show_profile;
 static lv_font_t s_cjk_font;
 static bool s_chinese_ok;
 static bool s_follow = true;
 static uint32_t s_center_route_m;
 static int s_zoom_index = 2;
+static float s_longitude_scale;
 
 static const float s_zoom_mpp[] = {1.5f, 3.0f, 6.0f, 12.0f, 24.0f};
 
@@ -80,7 +87,7 @@ static lv_obj_t *panel(lv_obj_t *parent, int x, int y, int w, int h, uint32_t co
     lv_obj_set_style_bg_color(obj, lv_color_hex(color), 0);
     lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(obj, 14, 0);
-    lv_obj_set_style_clip_corner(obj, true, 0);
+    /* Child clipping allocates ARGB layers that can exhaust the 24 KB LVGL pool. */
     lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
     return obj;
 }
@@ -134,45 +141,41 @@ esp_err_t route_ui_init(void)
 
     s_title = lv_label_create(s_screen);
     lv_obj_set_pos(s_title, 12, 10);
-    lv_obj_set_width(s_title, 128);
-    label_style(s_title, &lv_font_montserrat_14, 0xF2F7F8);
-    lv_label_set_long_mode(s_title, LV_LABEL_LONG_DOT);
+    lv_obj_set_size(s_title, 96, 20);
+    label_style(s_title, &noto_sans_sc_14, 0xF2F7F8);
+    lv_label_set_long_mode(s_title, LV_LABEL_LONG_CLIP);
     lv_label_set_text(s_title, "CTRA ROUTE");
 
     s_status = lv_label_create(s_screen);
-    lv_obj_set_pos(s_status, 142, 10);
-    lv_obj_set_width(s_status, 50);
+    lv_obj_set_pos(s_status, 110, 12);
+    lv_obj_set_size(s_status, 74, 18);
+    lv_label_set_long_mode(s_status, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(s_status, LV_TEXT_ALIGN_RIGHT, 0);
-    label_style(s_status, &lv_font_montserrat_14, 0x74D9C3);
+    label_style(s_status, &lv_font_montserrat_12, 0x74D9C3);
     lv_label_set_text(s_status, "BLE");
 
     s_battery = lv_label_create(s_screen);
-    lv_obj_set_pos(s_battery, 194, 10);
-    lv_obj_set_width(s_battery, 34);
+    lv_obj_set_pos(s_battery, 188, 12);
+    lv_obj_set_size(s_battery, 40, 18);
+    lv_label_set_long_mode(s_battery, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(s_battery, LV_TEXT_ALIGN_RIGHT, 0);
-    label_style(s_battery, &lv_font_montserrat_14, 0xF2F7F8);
+    label_style(s_battery, &lv_font_montserrat_12, 0xF2F7F8);
     lv_label_set_text(s_battery, "--");
 
     s_map = panel(s_screen, MAP_X, MAP_Y, MAP_W, MAP_H, 0x0D1E25);
 
-    s_route_line = lv_line_create(s_map);
+    s_route_line = lv_canvas_create(s_map);
     lv_obj_set_pos(s_route_line, 0, 0);
-    lv_obj_set_size(s_route_line, MAP_W, MAP_H);
-    lv_obj_set_style_line_color(s_route_line, lv_color_hex(0x5FE0C2), 0);
-    lv_obj_set_style_line_width(s_route_line, 3, 0);
-    lv_obj_set_style_line_rounded(s_route_line, true, 0);
-    lv_line_set_points_mutable(s_route_line, s_line_points, 0);
+    LV_DRAW_BUF_INIT_STATIC(s_map_buffer);
+    lv_canvas_set_draw_buf(s_route_line, &s_map_buffer);
+    lv_canvas_set_palette(s_route_line, 0, lv_color32_make(13, 30, 37, 255));
+    lv_canvas_set_palette(s_route_line, 1, lv_color32_make(76, 112, 132, 255));
+    lv_canvas_set_palette(s_route_line, 2, lv_color32_make(95, 224, 194, 255));
+    lv_canvas_set_palette(s_route_line, 3, lv_color32_make(245, 198, 90, 255));
 
     for (size_t i = 0; i < MAX_VISIBLE_MARKERS; ++i) {
-        s_marker_objs[i] = lv_obj_create(s_map);
-        lv_obj_remove_style_all(s_marker_objs[i]);
-        lv_obj_set_size(s_marker_objs[i], 9, 9);
-        lv_obj_set_style_radius(s_marker_objs[i], LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(s_marker_objs[i], lv_color_hex(0xF5C65A), 0);
-        lv_obj_set_style_bg_opa(s_marker_objs[i], LV_OPA_COVER, 0);
         s_marker_labels[i] = lv_label_create(s_map);
         label_style(s_marker_labels[i], &lv_font_montserrat_14, 0xDCE6E8);
-        lv_obj_add_flag(s_marker_objs[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_marker_labels[i], LV_OBJ_FLAG_HIDDEN);
     }
 
@@ -199,6 +202,15 @@ esp_err_t route_ui_init(void)
     label_style(s_cue_secondary, &lv_font_montserrat_14, 0x52666C);
     lv_label_set_text(s_cue_secondary, "UP/DOWN pan  HOLD zoom");
 
+    s_profile = lv_canvas_create(s_cue_card);
+    lv_obj_set_pos(s_profile, 12, 25);
+    LV_DRAW_BUF_INIT_STATIC(s_profile_buffer);
+    lv_canvas_set_draw_buf(s_profile, &s_profile_buffer);
+    lv_canvas_set_palette(s_profile, 0, lv_color32_make(244, 241, 232, 255));
+    lv_canvas_set_palette(s_profile, 1, lv_color32_make(82, 102, 108, 255));
+    s_profile_position = panel(s_profile, 0, 0, 2, PROFILE_H, 0xFF7448);
+    lv_obj_add_flag(s_profile, LV_OBJ_FLAG_HIDDEN);
+
     lv_screen_load(s_screen);
     return ESP_OK;
 }
@@ -220,10 +232,8 @@ static uint32_t center_point_index(const route_view_t *route, uint32_t route_m)
 static void project(int32_t lat_e7, int32_t lon_e7, int32_t center_lat,
                     int32_t center_lon, float mpp, int *x, int *y)
 {
-    const float lat_rad = (float)center_lat * 1.0e-7f * 0.017453292519943295f;
-    const float lon_scale = 0.011132f * cosf(lat_rad);
-    const float dx = (float)(lon_e7 - center_lon) * lon_scale;
-    const float dy = (float)(lat_e7 - center_lat) * 0.011132f;
+    const float dx = (float)((double)lon_e7 - center_lon) * s_longitude_scale;
+    const float dy = (float)((double)lat_e7 - center_lat) * 0.011132f;
     *x = MAP_W / 2 + (int)lroundf(dx / mpp);
     *y = MAP_H / 2 - (int)lroundf(dy / mpp);
 }
@@ -231,11 +241,13 @@ static void project(int32_t lat_e7, int32_t lon_e7, int32_t center_lat,
 static void render_map(const route_ui_model_t *model)
 {
     const route_view_t *route = model->route;
+    uint8_t *pixels = lv_draw_buf_goto_xy(&s_map_buffer, 0, 0);
+    const size_t stride = s_map_buffer.header.stride;
+    memset(pixels, 0, stride * MAP_H);
     if (route == NULL || route->header.point_count < 2U) {
-        lv_line_set_points_mutable(s_route_line, s_line_points, 0);
+        lv_obj_invalidate(s_route_line);
         lv_obj_add_flag(s_position, LV_OBJ_FLAG_HIDDEN);
         for (size_t i = 0; i < MAX_VISIBLE_MARKERS; ++i) {
-            lv_obj_add_flag(s_marker_objs[i], LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(s_marker_labels[i], LV_OBJ_FLAG_HIDDEN);
         }
         return;
@@ -250,44 +262,26 @@ static void render_map(const route_ui_model_t *model)
     route_point_t center;
     (void)route_view_get_point(route, center_index, &center);
     const float mpp = s_zoom_mpp[s_zoom_index];
+    s_longitude_scale = 0.011132f * cosf((float)center.lat_e7 * 1.0e-7f * 0.017453292519943295f);
 
-    const uint32_t approximate_span_m = (uint32_t)(MAP_H * mpp * 1.8f);
-    uint32_t point_radius = approximate_span_m / 20U + 24U;
-    if (point_radius > route->header.point_count) point_radius = route->header.point_count;
-    const uint32_t start = center_index > point_radius ? center_index - point_radius : 0U;
-    uint32_t end = center_index + point_radius;
-    if (end >= route->header.point_count) end = route->header.point_count - 1U;
-
-    uint32_t candidate_count = end - start + 1U;
-    uint32_t step = candidate_count / MAX_LINE_POINTS + 1U;
-    uint32_t count = 0;
-    for (uint32_t i = start; i <= end && count < MAX_LINE_POINTS; i += step) {
+    /* Fixed-size pixels retain all visible segments, including distant loopbacks. */
+    route_point_t previous;
+    (void)route_view_get_point(route, 0, &previous);
+    int x0, y0;
+    project(previous.lat_e7, previous.lon_e7, center.lat_e7, center.lon_e7, mpp, &x0, &y0);
+    for (uint32_t i = 1; i < route->header.point_count; ++i) {
         route_point_t p;
-        if (!route_view_get_point(route, i, &p)) continue;
-        int x;
-        int y;
-        project(p.lat_e7, p.lon_e7, center.lat_e7, center.lon_e7, mpp, &x, &y);
-        if (x < -24 || x > MAP_W + 24 || y < -24 || y > MAP_H + 24) continue;
-        s_line_points[count].x = x;
-        s_line_points[count].y = y;
-        ++count;
+        (void)route_view_get_point(route, i, &p);
+        int x1, y1;
+        project(p.lat_e7, p.lon_e7, center.lat_e7, center.lon_e7, mpp, &x1, &y1);
+        const bool passed = model->gps_valid && p.route_m <= model->route_m;
+        route_ui_plot_line(pixels, MAP_W, MAP_H, stride, x0, y0, x1, y1, passed ? 1 : 2);
+        x0 = x1; y0 = y1;
     }
-    if (end == route->header.point_count - 1U && count < MAX_LINE_POINTS) {
-        route_point_t p;
-        (void)route_view_get_point(route, end, &p);
-        int x;
-        int y;
-        project(p.lat_e7, p.lon_e7, center.lat_e7, center.lon_e7, mpp, &x, &y);
-        if (x >= -24 && x <= MAP_W + 24 && y >= -24 && y <= MAP_H + 24) {
-            s_line_points[count].x = x;
-            s_line_points[count].y = y;
-            ++count;
-        }
-    }
-    lv_line_set_points_mutable(s_route_line, s_line_points, count);
+    lv_obj_invalidate(s_route_line);
 
     size_t marker_slot = 0;
-    for (uint32_t i = 0; i < route->header.marker_count && marker_slot < MAX_VISIBLE_MARKERS; ++i) {
+    for (uint32_t i = 0; i < route->header.marker_count; ++i) {
         route_marker_t marker;
         if (!route_view_get_marker(route, i, &marker)) continue;
         int x;
@@ -295,31 +289,39 @@ static void render_map(const route_ui_model_t *model)
         project(marker.lat_e7, marker.lon_e7, center.lat_e7, center.lon_e7, mpp, &x, &y);
         if (x < 6 || x > MAP_W - 6 || y < 6 || y > MAP_H - 6) continue;
 
-        lv_obj_t *dot = s_marker_objs[marker_slot];
+        route_ui_plot_line(pixels, MAP_W, MAP_H, stride, x, y, x, y, 3);
+        if (marker_slot >= MAX_VISIBLE_MARKERS) continue;
         lv_obj_t *label = s_marker_labels[marker_slot];
-        lv_obj_set_pos(dot, x - 4, y - 4);
         uint32_t color = marker.type == ROUTE_MARKER_CP ? 0xF5C65A :
                          marker.type == ROUTE_MARKER_START ? 0x61D095 :
                          marker.type == ROUTE_MARKER_FINISH ? 0xF16D6D : 0x8FA3A8;
-        lv_obj_set_style_bg_color(dot, lv_color_hex(color), 0);
-        lv_obj_clear_flag(dot, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
 
         char text[12] = {0};
         if (marker.type == ROUTE_MARKER_CP) snprintf(text, sizeof(text), "CP%u", marker.id);
         else if (marker.type == ROUTE_MARKER_KM) snprintf(text, sizeof(text), "%uk", marker.id);
         else if (marker.type == ROUTE_MARKER_START) strcpy(text, "S");
         else if (marker.type == ROUTE_MARKER_FINISH) strcpy(text, "F");
-        if (text[0] != '\0') {
-            lv_label_set_text(label, text);
-            lv_obj_set_pos(label, x + 5, y - 8);
-            lv_obj_clear_flag(label, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
+        if (text[0] == '\0') continue;
+        lv_label_set_text(label, text);
+        lv_obj_update_layout(label);
+        const int w = lv_obj_get_width(label), h = lv_obj_get_height(label);
+        int lx = x + 5, ly = y - 8;
+        if (lx + w > MAP_W - 3) lx = MAP_W - 3 - w;
+        if (ly < 3) ly = 3;
+        if (ly + h > MAP_H - 3) ly = MAP_H - 3 - h;
+        bool collision = false;
+        for (size_t j = 0; j < marker_slot; ++j) {
+            const int px = lv_obj_get_x(s_marker_labels[j]), py = lv_obj_get_y(s_marker_labels[j]);
+            if (lx < px + lv_obj_get_width(s_marker_labels[j]) + 2 && lx + w + 2 > px &&
+                ly < py + lv_obj_get_height(s_marker_labels[j]) + 2 && ly + h + 2 > py) collision = true;
         }
+        if (collision) continue;
+        lv_obj_set_pos(label, lx, ly);
+        lv_obj_clear_flag(label, LV_OBJ_FLAG_HIDDEN);
         ++marker_slot;
     }
     for (; marker_slot < MAX_VISIBLE_MARKERS; ++marker_slot) {
-        lv_obj_add_flag(s_marker_objs[marker_slot], LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_marker_labels[marker_slot], LV_OBJ_FLAG_HIDDEN);
     }
 
@@ -339,21 +341,70 @@ static void render_map(const route_ui_model_t *model)
     }
 }
 
+static void render_profile(const route_ui_model_t *model)
+{
+    const route_view_t *route = model->route;
+    int32_t minimum = INT32_MAX, maximum = INT32_MIN;
+    unsigned valid = 0;
+    for (uint32_t i = 0; i < route->header.point_count; ++i) {
+        int32_t dm;
+        if (!route_view_get_elevation(route, i, &dm)) continue;
+        if (dm < minimum) minimum = dm;
+        if (dm > maximum) maximum = dm;
+        ++valid;
+    }
+    if (valid < 2) {
+        lv_label_set_text(s_cue_primary, "NO ELEVATION DATA");
+        lv_label_set_text(s_cue_secondary, "Import GPX with elevation again");
+        return;
+    }
+    uint8_t *pixels = lv_draw_buf_goto_xy(&s_profile_buffer, 0, 0);
+    const size_t stride = s_profile_buffer.header.stride;
+    memset(pixels, 0, stride * PROFILE_H);
+    const double distance = route->header.route_distance_m ? route->header.route_distance_m : 1;
+    const double span = maximum > minimum ? maximum - minimum : 10;
+    int previous_x = 0, previous_y = 0;
+    bool have_previous = false;
+    for (uint32_t i = 0; i < route->header.point_count; ++i) {
+        route_point_t point;
+        int32_t dm;
+        if (!route_view_get_elevation(route, i, &dm)) { have_previous = false; continue; }
+        (void)route_view_get_point(route, i, &point);
+        int x = (int)lround(point.route_m / distance * (PROFILE_W - 1));
+        int y = maximum == minimum ? PROFILE_H / 2 :
+                PROFILE_H - 3 - (int)lround((dm - minimum) / span * (PROFILE_H - 6));
+        if (have_previous) route_ui_plot_line(pixels, PROFILE_W, PROFILE_H, stride, previous_x, previous_y, x, y, 1);
+        previous_x = x; previous_y = y; have_previous = true;
+    }
+    char text[64];
+    snprintf(text, sizeof(text), "%.0f..%.0fm  %.1fkm", minimum / 10.0f, maximum / 10.0f,
+             route->header.route_distance_m / 1000.0f);
+    lv_label_set_text(s_cue_primary, text);
+    lv_obj_clear_flag(s_profile, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_cue_secondary, LV_OBJ_FLAG_HIDDEN);
+    if (model->gps_valid && model->route_m <= route->header.route_distance_m) {
+        lv_obj_set_x(s_profile_position, (int)lround(model->route_m / distance * (PROFILE_W - 2)));
+        lv_obj_clear_flag(s_profile_position, LV_OBJ_FLAG_HIDDEN);
+    } else lv_obj_add_flag(s_profile_position, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_invalidate(s_profile);
+}
+
 void route_ui_render(const route_ui_model_t *model)
 {
     if (model == NULL || s_screen == NULL) return;
 
     if (model->route != NULL) {
-        lv_label_set_text(s_title, model->route->header.name[0] != '\0'
-            ? model->route->header.name : "CTRA ROUTE");
+        char title[28];
+        route_ui_title(model->route->header.name[0] != '\0' ? model->route->header.name : "CTRA ROUTE", title);
+        lv_label_set_text(s_title, title);
     } else {
         lv_label_set_text(s_title, "CTRA ROUTE");
     }
 
     char status[24];
-    snprintf(status, sizeof(status), "%s%s",
+    snprintf(status, sizeof(status), "%s %s",
              model->ble_connected ? "BLE" : "--",
-             model->gps_valid ? " GPS" : "");
+             model->gps_valid ? "GPS" : "--");
     lv_label_set_text(s_status, status);
 
     if (model->battery_percent >= 0) {
@@ -365,6 +416,9 @@ void route_ui_render(const route_ui_model_t *model)
     }
 
     render_map(model);
+    label_style(s_cue_primary, s_chinese_ok ? &s_cjk_font : &lv_font_montserrat_14, 0x14262C);
+    lv_obj_add_flag(s_profile, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(s_cue_secondary, LV_OBJ_FLAG_HIDDEN);
 
     if (model->upload_active) {
         char line[48];
@@ -378,6 +432,12 @@ void route_ui_render(const route_ui_model_t *model)
     if (model->route == NULL) {
         lv_label_set_text(s_cue_primary, s_chinese_ok ? "等待路程" : "WAITING FOR ROUTE");
         lv_label_set_text(s_cue_secondary, "Connect CTRA miniapp via BLE");
+        return;
+    }
+
+    if (s_show_profile) {
+        label_style(s_cue_primary, &lv_font_montserrat_12, 0x14262C);
+        render_profile(model);
         return;
     }
 
@@ -448,4 +508,9 @@ void route_ui_recenter(uint32_t route_m)
 bool route_ui_following(void)
 {
     return s_follow;
+}
+
+void route_ui_toggle_panel(void)
+{
+    s_show_profile = !s_show_profile;
 }

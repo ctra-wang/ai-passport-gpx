@@ -19,6 +19,24 @@ SPEC.loader.exec_module(rc)
 
 
 class RouteCompilerTests(unittest.TestCase):
+    def test_elevation_extension_and_utf8_name(self) -> None:
+        points = [rc.TrackPoint(30, 104, -25.5, 0), rc.TrackPoint(30.001, 104, None, 100),
+                  rc.TrackPoint(30.002, 104, 800, 200)]
+        package = rc.compile_route(points, [], [], route_id=1, name="崇州市绿道百公里挑战赛")
+        header = rc.HEADER_STRUCT.unpack(package[:96])
+        offset = 96 + 12 * 3
+        self.assertEqual(package[offset:offset + 4], b"ELEV")
+        self.assertEqual(struct.unpack_from("<Iiii", package, offset + 4), (3, -255, -2147483648, 8000))
+        self.assertEqual(header[11], offset + 20)
+        self.assertEqual(header[-1].rstrip(b"\0").decode("utf-8"), "崇州市绿道百公里挑战")
+        for p in points:
+            p.ele = None
+        legacy = rc.compile_route(points, [], [], route_id=1, name="CTRA")
+        self.assertEqual(rc.HEADER_STRUCT.unpack(legacy[:96])[11], offset)
+        points[0].ele = 10001
+        with self.assertRaises(ValueError):
+            rc.compile_route(points, [], [], route_id=1, name="CTRA")
+
     def _write_gpx(self, path: Path) -> None:
         path.write_text(
             """<?xml version="1.0" encoding="UTF-8"?>
@@ -63,8 +81,12 @@ class RouteCompilerTests(unittest.TestCase):
             points, _ = rc.parse_gpx(gpx)
             sampled = rc.resample(points, 25.0)
             self.assertGreater(len(sampled), 3)
-            for index, point in enumerate(sampled[:-1]):
-                self.assertAlmostEqual(point.route_m, index * 25.0, places=5)
+            for a, b in zip(sampled, sampled[1:]):
+                self.assertLessEqual(b.route_m - a.route_m, 25.00001)
+            for point in points:
+                self.assertIn(point, sampled)
+            for index in range(1, int(points[-1].route_m // 25) + 1):
+                self.assertTrue(any(abs(p.route_m - index * 25) < 1e-5 for p in sampled))
             self.assertAlmostEqual(sampled[-1].route_m, points[-1].route_m, places=5)
 
     def test_analysis_candidates_are_json_serializable(self) -> None:

@@ -10,6 +10,14 @@
 
 可复用的字库文件与生成的字库源码放在 `fonts/`。
 
+`fonts/NotoSansCJKsc-Regular.otf` 来自 [Noto CJK](https://github.com/notofonts/noto-cjk/tree/main/Sans/OTF/SimplifiedChinese)，许可证为 `fonts/OFL-NotoSansSC.txt` 中的 SIL Open Font License。`fonts/noto_sans_sc_14.c` 是其 14 像素、1 bpp、不压缩的标题字库，由 `main/CMakeLists.txt` 编译。覆盖可打印 ASCII、常用 CJK 统一汉字、CJK 标点和全角字符，不承诺所有 Unicode 字形。
+
+使用固定版本转换器复现：
+
+```bash
+npx --yes --package lv_font_conv@1.5.3 lv_font_conv --font assets/fonts/NotoSansCJKsc-Regular.otf --range 0x20-0x7E,0x2018-0x201F,0x3000-0x303F,0x4E00-0x9FFF,0xFF00-0xFFEF --size 14 --bpp 1 --format lvgl --no-compress --no-kerning --lv-font-name noto_sans_sc_14 --lv-include lvgl.h --output assets/fonts/noto_sans_sc_14.c
+```
+
 - 命名要能反映字族、字重、字级与格式。
 - 记录来源、许可、字符范围、转换命令与目标放置路径。
 - 添加字库前评估 Flash 与内部 RAM 影响；ESP32-C3 无 PSRAM。

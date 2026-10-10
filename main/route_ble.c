@@ -70,14 +70,19 @@ static int start_advertising(void)
 {
     struct ble_hs_adv_fields fields = {0};
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-    fields.name = (const uint8_t *)ROUTE_BLE_DEVICE_NAME;
-    fields.name_len = strlen(ROUTE_BLE_DEVICE_NAME);
-    fields.name_is_complete = 1;
     fields.uuids128 = &s_service_uuid;
     fields.num_uuids128 = 1;
     fields.uuids128_is_complete = 1;
 
     int rc = ble_gap_adv_set_fields(&fields);
+    if (rc != 0) return rc;
+
+    /* The complete name and service UUID together exceed the 31-byte limit. */
+    struct ble_hs_adv_fields response = {0};
+    response.name = (const uint8_t *)ROUTE_BLE_DEVICE_NAME;
+    response.name_len = strlen(ROUTE_BLE_DEVICE_NAME);
+    response.name_is_complete = 1;
+    rc = ble_gap_adv_rsp_set_fields(&response);
     if (rc != 0) return rc;
 
     struct ble_gap_adv_params params = {0};

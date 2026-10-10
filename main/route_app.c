@@ -180,6 +180,8 @@ static void process_button(const app_event_t *event)
     else if (action == BSP_BTN_LONG && button == BSP_BTN_UP) route_ui_zoom(+1);
     else if (action == BSP_BTN_LONG && button == BSP_BTN_DOWN) route_ui_zoom(-1);
     else if (action == BSP_BTN_CLICK && button == BSP_BTN_OK) {
+        route_ui_toggle_panel();
+    } else if (action == BSP_BTN_LONG && button == BSP_BTN_OK) {
         route_ui_recenter(s_nav_ready ? s_nav.route_m : 0U);
     } else if (action == BSP_BTN_DOUBLE && button == BSP_BTN_OK) {
         replay_last_cue();

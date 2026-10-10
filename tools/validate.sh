@@ -43,6 +43,10 @@ run_static_checks() {
         -o "${test_dir}/test_route_format"
     "${test_dir}/test_route_format"
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_route_ui_geometry.c main/route_ui_geometry.c -lm \
+        -o "${test_dir}/test_route_ui_geometry"
+    "${test_dir}/test_route_ui_geometry"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
         tests/test_route_nav.c main/route_format.c main/route_nav.c -lm \
         -o "${test_dir}/test_route_nav"
     "${test_dir}/test_route_nav"
@@ -76,6 +80,7 @@ run_static_checks() {
         "${test_dir}/test_demo_${demo}_runtime"
     done
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_route_compiler.py
+    PYTHONDONTWRITEBYTECODE=1 python3 tests/test_route_startup.py
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_deep_sleep_contract.py
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_check_repo.py
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_verify_firmware.py

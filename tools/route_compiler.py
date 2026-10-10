@@ -165,7 +165,9 @@ def resample(points: list[TrackPoint], spacing_m: float) -> list[TrackPoint]:
         next_m += spacing_m
     if selected[-1].route_m < total_m:
         selected.append(points[-1])
-    return selected
+    # Uniform samples alone cut corners and can erase short out-and-back legs.
+    merged = sorted(selected + points, key=lambda p: p.route_m)
+    return [p for i, p in enumerate(merged) if i == 0 or p != merged[i - 1]]
 
 
 def coordinate_at(points: list[TrackPoint], route_m: float) -> TrackPoint:
@@ -413,9 +415,9 @@ def load_cues_json(path: Path, points: list[TrackPoint]) -> list[Cue]:
 
 
 def safe_name(value: str) -> bytes:
-    printable = "".join(ch if 32 <= ord(ch) < 127 else " " for ch in value)
+    printable = "".join(ch if ch.isprintable() else " " for ch in value)
     printable = " ".join(printable.split()) or "CTRA ROUTE"
-    return printable.encode("ascii", "replace")[:31].ljust(32, b"\0")
+    return printable.encode("utf-8")[:31].decode("utf-8", "ignore").encode("utf-8").ljust(32, b"\0")
 
 
 def compile_route(
@@ -438,13 +440,20 @@ def compile_route(
         POINT_STRUCT.pack(round(p.lat * 1e7), round(p.lon * 1e7), int(round(p.route_m)))
         for p in sampled
     )
+    elevation_bytes = b""
+    if any(p.ele is not None and math.isfinite(p.ele) for p in sampled):
+        values = [round(p.ele * 10) if p.ele is not None and math.isfinite(p.ele) else -2147483648
+                  for p in sampled]
+        if any(dm != -2147483648 and not -120000 <= dm <= 100000 for dm in values):
+            raise ValueError("elevation outside supported -12000..10000 meter range")
+        elevation_bytes = b"ELEV" + struct.pack("<I", len(sampled)) + struct.pack(f"<{len(values)}i", *values)
     marker_bytes = b"".join(
         MARKER_STRUCT.pack(m.lat_e7, m.lon_e7, m.route_m, m.marker_type, m.flags, m.marker_id)
         for m in markers
     )
 
     points_offset = HEADER_SIZE
-    markers_offset = points_offset + len(point_bytes)
+    markers_offset = points_offset + len(point_bytes) + len(elevation_bytes)
     cues_offset = markers_offset + len(marker_bytes)
     data_offset = cues_offset + len(cues) * CUE_SIZE
 
@@ -483,7 +492,7 @@ def compile_route(
     max_lat = max(round(p.lat * 1e7) for p in sampled)
     max_lon = max(round(p.lon * 1e7) for p in sampled)
 
-    payload = point_bytes + marker_bytes + bytes(cue_bytes) + bytes(audio_blob)
+    payload = point_bytes + elevation_bytes + marker_bytes + bytes(cue_bytes) + bytes(audio_blob)
     payload_crc = zlib.crc32(payload) & 0xFFFFFFFF
     if total_size > MAX_ROUTE_BYTES:
         raise ValueError(
@@ -518,7 +527,7 @@ def command() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gpx", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--name", help="ASCII display name used on Passport")
+    parser.add_argument("--name", help="UTF-8 display name used on Passport")
     parser.add_argument("--route-id", type=int, default=0)
     parser.add_argument("--sample-m", type=float, default=25.0)
     parser.add_argument("--cues-json", type=Path,
